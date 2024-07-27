@@ -41,64 +41,27 @@ To showcase a secure and efficient approach to running and managing arbitrary pr
 #### a. In-memory Job Logger
 - Implement a thread-safe buffer to store output from runnning the command
 - Use a read-write mutex to ensure thread-safety for concurrent read/write operations
-- Implement a pub/sub pattern for real-time log streaming:
-  - Implement a fan-out pattern to broadcast new log entries to all subscribers
-- Provide methods for adding logs, and subscribing to log streams
+- Provide methods for adding logs, and getting the log given a start index and size of bytes to read
 
 ```go
 // Logger represents an in-memory buffer for storing job logs.
 
-// Callback for broadcasting newly generated output
-type OutputCallback func(data []byte) error
-type CancelFunc func()
-
-type Subscriber struct {
-  outputCallback OutputCallback
-  cancelFunc     CancelFunc
-  // Maintains the index of the last sent position in the logs buffer.
-  logIndex       int
-  // The size of the chunk to stream. When publishing logs, the streamed chunks will be
-  // upto to the size specified by this value. 
-  chunkSize      int
-}
-
 type Logger struct {
-	mu          sync.RWMutex
-	logs        bytes.Buffer
-  // Map to keep track of the the subscribers to the log
-  // The subscribers will be tracked using ids that are internal to the logger
-	subscribers map[id]Subscriber
-  // Monotonicaly increasing ids of subscribers. 
-  nextId      int
-  // The following is only needed if we implement the `broadcast` function
-  // Maximum number of goroutines that will handle publishing to subscribers.
-  // This is different from the total number of subscribers, which can be multiple orders of magnitude
-  // more than the number of goroutines.
-  maxConcurrency int
+	mu   sync.RWMutex
+	logs bytes.Buffer
 }
 
-// InitLogger creates a new Logger.
-func InitLogger(maxConcurrency int) *Logger
+// NewLogger creates a new Logger instance
+func NewLogger() *Logger
 
-// Appends new output from processes to the logs buffer
+// AddLog appends new output from processes to the logs buffer
 func (l *Logger) AddLog(output []byte)
 
-// Adds a subscriber to the logger.
-// Returns a cancel function that can be called to unsubscribe from the logger
-// This initiates a goroutine that maintains a pointer to the last sent data from the buffer
-// to the supplied callback. This pointer is used to determine what needs to be sent to each subscriber.
-// This way, all the subscribers are managed independently through goroutines.
-func (l *Logger) Subscribe(callback OutputCallback, chunkSize int) (CancelFunc)
+// GetLog reads an arbitrary chunk of size bytes_to_read from start_index from the logs buffer
+func (l *Logger) GetLog(start_index int, bytes_to_read int) ([]byte, error)
 
-// Closes all subscriber channels and clears the subscriber list.
-func (l *Logger) Close()
-
-// The following function will only be implemented if we have time. 
-// This is an internal function that initates a configurable pool of goroutines that broadcast logs to subscribers.
-// The goal of this function is to reduce the number of goroutines so that we can handle large numbers of subscribers.
-// The number of goroutines is different from the actual number of subscribers
-// to ensure that we are not spawning a go routine for each subscriber.
-func (l *logger) broadcast() error
+// Size returns the current size of the logs buffer
+func (l *Logger) Size() int
 
 ```
 
@@ -236,8 +199,7 @@ service JobWorker {
   rpc GetJobStatus(JobId) returns (JobStatusResponse) {}
   
   // Streams the output of a job.
-  // The first response contains the full output from the beginning of job execution
-  rpc GetJobOutput(JobId) returns (stream JobOutputResponse) {}
+  rpc GetJobOutput(stream JobOutputResquest) returns (stream JobOutputResponse) {}
 }
 
 // StartJobRequest contains the information needed to start a new job.
@@ -285,6 +247,15 @@ message StopJobResponse {
 message JobStatusResponse {
   // The current status of the job.
   JobStatus status = 1;
+}
+
+
+// JobOutputRequest requests to the number of bytes to read from the output of a job.
+// The server will keep streaming bytes_to_read number of bytes, until the client sends
+// another request to change the number of bytes_to_read
+message JobOutputRequest {
+  string id = 1;
+  unit64 bytes_to_read = 2;
 }
 
 // JobOutputResponse contains a chunk of output data from a job.
