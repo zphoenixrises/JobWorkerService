@@ -41,7 +41,7 @@ To showcase a secure and efficient approach to running and managing arbitrary pr
 #### a. In-memory Job Logger
 - Implement a thread-safe buffer to store output from runnning the command
 - Use a read-write mutex to ensure thread-safety for concurrent read/write operations
-- Provide methods for adding logs, and getting the log given a start index and size of bytes to read
+- Provide methods for adding logs, and getting a stream Reader to the log
 
 ```go
 // Logger represents an in-memory buffer for storing job logs.
@@ -57,8 +57,8 @@ func NewLogger() *Logger
 // AddLog appends new output from processes to the logs buffer
 func (l *Logger) AddLog(output []byte)
 
-// GetLog reads an arbitrary chunk of size bytes_to_read from start_index from the logs buffer
-func (l *Logger) GetLog(start_index int, bytes_to_read int) ([]byte, error)
+// Gets an instance of io.Reader that is able to read the data from the internal logs buffer
+func (l *Logger) GetLogReader() *io.Reader
 
 // Size returns the current size of the logs buffer
 func (l *Logger) Size() int
