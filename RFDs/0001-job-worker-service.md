@@ -58,7 +58,7 @@ func NewLogger() *Logger
 func (l *Logger) AddLog(output []byte)
 
 // Gets an instance of io.Reader that is able to read the data from the internal logs buffer
-func (l *Logger) GetLogReader() *io.Reader
+func (l *Logger) GetLogReader() io.Reader
 
 // Size returns the current size of the logs buffer
 func (l *Logger) Size() int
