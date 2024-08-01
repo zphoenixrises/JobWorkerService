@@ -128,7 +128,7 @@ type Executor struct {
 
 // NewExecutor creates a new Executor for the given command and arguments.
 // cgroupPath will be used to set the path of the cgroup relative to the root cgroup -> /sys/fs/cgroup/jobworker
-func NewExecutor(command string, args []string, cgroupPath string) *Executor
+func NewExecutor(command string, args []string) (*Executor, string) 
 
 // Start begins the execution of the job.
 func (e *Executor) Start() error
@@ -391,6 +391,11 @@ All jobs are run using cancellable contexts.
 2. Networking and job management
    - Test job lifecycle (start, status, stream, stop)
    - Test concurrent output streaming
+   - Test jobs with different types of outputs:
+      - jobs with sparse outputs
+      - jobs with dense outputs
+      - long running jobs
+      - short running jobs
    - Test resource limit enforcement
 
 ## Edge Cases and Considerations
