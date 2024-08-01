@@ -177,22 +177,23 @@ func (e *Executor) Start() (err error) {
 func (e *Executor) Stop() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	defer e.cancel()
 
 	if e.status != JobStatusRunning {
 		return fmt.Errorf("job is not running")
 	}
+	fmt.Println("Stopping Job : ", e.rm.jobID)
 
-	e.cancel()
-
+	fmt.Println("Sending SIGTERM")
 	// Send SIGTERM first
 	if err := e.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		return fmt.Errorf("failed to send SIGTERM: %w", err)
 	}
-
 	// Wait for a short period to allow graceful shutdown
 	select {
 	case <-time.After(5 * time.Second):
 		// If the process hasn't exited, force kill it
+		fmt.Println("Sending SIGKILL")
 		if err := e.cmd.Process.Kill(); err != nil {
 			return fmt.Errorf("failed to kill process: %w", err)
 		}
@@ -202,7 +203,6 @@ func (e *Executor) Stop() error {
 
 	e.status = JobStatusStopped
 	e.stopped = time.Now()
-
 	return nil
 }
 
