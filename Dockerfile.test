@@ -1,0 +1,17 @@
+FROM golang:1.22.5 AS builder
+# Set environment variables for cross-compilation
+ENV GOOS=linux
+ENV GOARCH=amd64
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+
+RUN go mod download
+
+COPY . .
+
+# Install stress-ng
+RUN apt-get update && apt-get install -y stress-ng
+# Run tests
+CMD ["go", "test","-v", "./pkg/jobworker/..."]

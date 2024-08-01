@@ -67,10 +67,6 @@ func NewResourceManager() (*ResourceManager, error) {
 func enableControllers(path string) error {
 	controllersPath := filepath.Join(path, "cgroup.subtree_control")
 	fmt.Printf("controllerpath: %s", controllersPath)
-	// Check if the subtree_control file exists
-	// if _, err := os.Stat(controllersPath); os.IsNotExist(err) {
-	// 	return fmt.Errorf("cgroup.subtree_control not found at %s", controllersPath)
-	// }
 	return os.WriteFile(controllersPath, []byte("+cpu +io +memory"), 0644)
 }
 
