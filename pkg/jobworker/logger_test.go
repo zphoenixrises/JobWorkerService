@@ -12,7 +12,7 @@ import (
 )
 
 func TestConcurrentWriteAndRead(t *testing.T) {
-	writer := NewLogger()
+	writer := newLogger()
 	var wg sync.WaitGroup
 
 	// Writer goroutine
@@ -36,7 +36,7 @@ func TestConcurrentWriteAndRead(t *testing.T) {
 		wg.Add(1)
 		go func(readerID int) {
 			defer wg.Done()
-			reader := NewLogReader(writer)
+			reader := newLogReader(writer)
 			bufferSize := rand.Intn(20) + 1 // Random buffer size between 1 and 20 bytes
 			buffer := make([]byte, bufferSize)
 			var readData bytes.Buffer
@@ -53,6 +53,7 @@ func TestConcurrentWriteAndRead(t *testing.T) {
 				time.Sleep(time.Duration(rand.Intn(20)) * time.Millisecond)
 			}
 			assert.True(t, bytes.Equal(readData.Bytes(), writer.buffer.Bytes()))
+
 		}(i)
 	}
 
@@ -60,7 +61,7 @@ func TestConcurrentWriteAndRead(t *testing.T) {
 
 	var buffer bytes.Buffer
 
-	io.Copy(&buffer, NewLogReader(writer))
+	io.Copy(&buffer, newLogReader(writer))
 
 	assert.True(t, bytes.Equal(buffer.Bytes(), writer.buffer.Bytes()))
 }

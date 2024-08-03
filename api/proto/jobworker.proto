@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package jobworker;
+
+option go_package = "github.com/zphoenixrises/JobWorkerService";
+import "google/protobuf/timestamp.proto";
+
+// JobWorker service provides methods to manage and monitor jobs.
+service JobWorker {
+  // Starts a new job with the given command and resource limits.
+  rpc StartJob(StartJobRequest) returns (StartJobResponse) {}
+  
+  // Stops a running job identified by its ID.
+  rpc StopJob(JobId) returns (StopJobResponse) {}
+  
+  // Retrieves the current status of a job.
+  rpc GetJobStatus(JobId) returns (JobStatusResponse) {}
+  
+  // Streams the output of a job.
+  rpc GetJobOutput(JobOutputRequest) returns (stream JobOutputResponse) {}
+}
+
+// StartJobRequest contains the information needed to start a new job.
+message StartJobRequest {
+  // The command to be executed.
+  string command = 1;
+  
+  // The arguments for the command.
+  repeated string args = 2;
+  
+  // The resource limits for the job.
+  ResourceLimits resource_limits = 3;
+}
+
+message JobId {
+  // The UUID of the job.
+  string id = 1;
+}
+
+// StartJobResponse contains the result of a job start request.
+message StartJobResponse {
+  // The UUID of the started job.
+  string id = 1;
+  
+  // The initial status of the job.
+  JobStatus status = 2;
+}
+
+// StopJobResponse contains the result of a job stop request.
+message StopJobResponse {
+  // The UUID of the stopped job.
+  string id = 1;
+  
+  // The final status of the job.
+  JobStatus status = 2;
+  
+  // The time when the job was started.
+  google.protobuf.Timestamp start_time = 3;
+  
+  // The time when the job was stopped.
+  google.protobuf.Timestamp stop_time = 4;
+}
+
+// JobStatusResponse contains the current status and resource usage of a job.
+message JobStatusResponse {
+  // The current status of the job.
+  JobStatus status = 1;
+  int32 errorcode = 2;
+  string error = 3;
+}
+
+// JobOutputRequest requests to the number of bytes to read from the output of a job.
+// The server will keep streaming bytes_to_read number of bytes, until the client sends
+// another request to change the number of bytes_to_read
+message JobOutputRequest {
+  string id = 1;
+  uint64 bytes_to_read = 2;
+}
+
+// JobOutputResponse contains a chunk of output data from a job that can either be a 
+message JobOutputResponse {
+  oneof output {
+    bytes stdout = 1;
+    bytes stderr = 2;
+  }
+}
+
+// ResourceLimits defines the resource constraints for a job.
+message ResourceLimits {
+  // The number of CPU shares allocated to the job.
+  float cpu_weight = 1;
+  
+  // The memory limit in bytes.
+  uint64 memory_limit_bytes = 2;
+  
+  // The I/O weight for prioritizing disk I/O.
+  uint64 io_max_bps = 3;
+}
+
+// JobStatus represents the possible states of a job.
+enum JobStatus {
+  // The job is waiting to be executed.
+  PENDING = 0;
+  RUNNING = 1;
+  // The job has completed successfully.
+  COMPLETED = 2;
+  // The job has failed due to any number of reasons, including resource exahustion, fatal errors etc
+  FAILED = 3;  
+  // The job was stopped by user request.
+  STOPPED = 4;
+  // The job was killed
+  KILLED = 5;
+}

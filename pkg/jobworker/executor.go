@@ -5,17 +5,10 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
-)
-
-const (
-	smallBufferSize = 4 * 1024 // 4 KB buffer
 )
 
 type JobStatus string
@@ -48,22 +41,25 @@ type Executor struct {
 
 func NewExecutor(command string, args []string, limits ResourceLimits) (*Executor, string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	rm, err := NewResourceManager()
+	rm, err := newResourceManager()
 	if err != nil {
 		cancel()
 		return nil, "", fmt.Errorf("failed to create resource manager: %w", err)
 	}
 
-	if err := rm.SetLimits(limits); err != nil {
+	if err := rm.setLimits(limits); err != nil {
 		cancel()
 		return nil, "", fmt.Errorf("failed to create resource manager: %w", err)
 	}
+	log.Println("Got Job: ")
+	log.Println("command: ", command)
+	log.Println("args: ", args)
 
 	return &Executor{
 		Command:      command,
 		Args:         args,
-		outputLogger: NewLogger(),
-		errorLogger:  NewLogger(),
+		outputLogger: newLogger(),
+		errorLogger:  newLogger(),
 		rm:           rm,
 		ctx:          ctx,
 		cancel:       cancel,
@@ -89,43 +85,20 @@ func (e *Executor) Start() (err error) {
 		return
 	}
 
-	cgroupDir, err := os.Open(e.rm.path)
-	if err != nil {
-		err = fmt.Errorf("failed to open cgroup directory: %w", err)
-		return
-	}
-	defer cgroupDir.Close()
-
-	// Get the file descriptor for the cgroup directory
-	// cgroupFd := cgroupDir.Fd()
-
 	e.cmd = exec.CommandContext(e.ctx, e.Command, e.Args...)
 	e.cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
-		// UseCgroupFD: true,
-		// CgroupFD:    int(cgroupFd),
-		// Cloneflags:  syscall.CLONE_NEWNS | syscall.CLONE_NEWPID,
 	}
 
-	stdout, err := e.cmd.StdoutPipe()
-	if err != nil {
-		err = fmt.Errorf("failed to create stdout pipe: %w", err)
-		return
-	}
-
-	stderr, err := e.cmd.StderrPipe()
-	if err != nil {
-		err = fmt.Errorf("failed to create stderr pipe: %w", err)
-		return
-	}
+	e.cmd.Stdout = e.outputLogger
+	e.cmd.Stderr = e.errorLogger
 
 	if err = e.cmd.Start(); err != nil {
 		err = fmt.Errorf("failed to start command: %w", err)
 		return
 	}
 
-	pid := e.cmd.Process.Pid
-	if err = os.WriteFile(filepath.Join(e.rm.path, "cgroup.procs"), []byte(strconv.Itoa(pid)), 0644); err != nil {
+	if err = e.rm.addProcess(e.cmd.Process.Pid); err != nil {
 		err = fmt.Errorf("error adding process to cgroup: %v", err)
 		return
 	}
@@ -133,20 +106,7 @@ func (e *Executor) Start() (err error) {
 	e.started = time.Now()
 	e.status = JobStatusRunning
 
-	var wg sync.WaitGroup
-	wg.Add(2)
 	go func() {
-		defer wg.Done()
-		e.handleOutput(stdout, e.outputLogger, "stdout")
-	}()
-
-	go func() {
-		defer wg.Done()
-		e.handleOutput(stderr, e.errorLogger, "stderr")
-	}()
-
-	go func() {
-		wg.Wait()
 		waitErr := e.cmd.Wait()
 
 		e.mu.Lock()
@@ -159,17 +119,22 @@ func (e *Executor) Start() (err error) {
 			}
 			if e.ctx.Err() == context.Canceled {
 				e.status = JobStatusStopped
+				e.errorString = fmt.Sprintf("job cancelled: %s (exit code: %d)", e.errorString, e.exitCode)
 			} else {
 				e.status = JobStatusFailed
-				e.errorString = waitErr.Error()
+				e.errorString = fmt.Sprintf("job failed: %s (exit code: %d)", e.errorString, e.exitCode)
 			}
-		} else {
+		}
+		// any other state is already handled
+		if e.status == JobStatusRunning {
 			e.status = JobStatusCompleted
 			e.exitCode = 0
 		}
 
+		log.Println(e.rm.jobID, "Exited")
 		e.outputLogger.Close()
 		e.errorLogger.Close()
+		log.Println(e.rm.jobID, "loggers closed")
 		e.rm.Cleanup()
 	}()
 
@@ -219,11 +184,11 @@ func (e *Executor) GetStatus() JobStatus {
 }
 
 func (e *Executor) GetOutputReader() io.Reader {
-	return NewLogReader(e.outputLogger)
+	return newLogReader(e.outputLogger)
 }
 
 func (e *Executor) GetErrorReader() io.Reader {
-	return NewLogReader(e.errorLogger)
+	return newLogReader(e.errorLogger)
 }
 
 func (e *Executor) GetStartTime() time.Time {
@@ -258,32 +223,4 @@ func (e *Executor) Wait() error {
 		return fmt.Errorf("job failed: %s (exit code: %d)", e.errorString, e.exitCode)
 	}
 	return nil
-}
-
-func (e *Executor) handleOutput(r io.Reader, logger *logger, sourceType string) {
-	buffer := make([]byte, smallBufferSize)
-	for {
-		n, err := r.Read(buffer)
-		if n > 0 {
-			_, writeErr := logger.Write(buffer[:n])
-			if writeErr != nil {
-				e.mu.Lock()
-				e.status = JobStatusFailed
-				e.errorString = fmt.Sprintf("%s write error: %v", sourceType, writeErr)
-				e.cancel()
-				e.mu.Unlock()
-				return
-			}
-		}
-		if err != nil {
-			if err != io.EOF {
-				e.mu.Lock()
-				e.status = JobStatusFailed
-				e.errorString = fmt.Sprintf("%s read error: %v", sourceType, err)
-				e.cancel()
-				e.mu.Unlock()
-			}
-			return
-		}
-	}
 }
