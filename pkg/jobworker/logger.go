@@ -1,24 +1,26 @@
 package jobworker
 
 import (
+	"bytes"
 	"io"
 	"sync"
 )
 
-type Logger struct {
-	buffer []byte
+type logger struct {
+	buffer bytes.Buffer
 	mutex  sync.RWMutex
 	cond   *sync.Cond
 	closed bool
 }
 
-func NewLogger() *Logger {
-	l := &Logger{}
-	l.cond = sync.NewCond(&l.mutex)
+func NewLogger() *logger {
+	l := &logger{}
+	l.cond = sync.NewCond(l.mutex.RLocker())
 	return l
 }
 
-func (l *Logger) Write(p []byte) (n int, err error) {
+// Write implements the io.Writer interface
+func (l *logger) Write(p []byte) (n int, err error) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 
@@ -26,30 +28,12 @@ func (l *Logger) Write(p []byte) (n int, err error) {
 		return 0, io.ErrClosedPipe
 	}
 
-	l.buffer = append(l.buffer, p...)
+	n, err = l.buffer.Write(p)
 	l.cond.Broadcast()
-	return len(p), nil
+	return n, err
 }
 
-func (l *Logger) ReadAt(p []byte, off int64) (n int, err error) {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
-
-	if off >= int64(len(l.buffer)) {
-		if l.closed {
-			return 0, io.EOF
-		}
-		return 0, nil
-	}
-
-	n = copy(p, l.buffer[off:])
-	if n < len(p) && l.closed {
-		err = io.EOF
-	}
-	return
-}
-
-func (l *Logger) Close() error {
+func (l *logger) Close() error {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 
@@ -58,30 +42,35 @@ func (l *Logger) Close() error {
 	return nil
 }
 
+// logReader implements io.Reader and references the Logger's buffer
 type logReader struct {
-	logger *Logger
+	logger *logger
 	offset int64
 }
 
-func NewLogReader(logger *Logger) io.Reader {
-	return &logReader{logger: logger}
+// NewLogReader creates a new StreamReader for the given StreamWriter
+func NewLogReader(logger *logger) io.Reader {
+	return &logReader{
+		logger: logger,
+		offset: 0,
+	}
 }
 
+// Read implements the io.Reader interface
 func (lr *logReader) Read(p []byte) (n int, err error) {
-	for {
-		n, err = lr.logger.ReadAt(p, lr.offset)
-		lr.offset += int64(n)
-
-		if n > 0 || err != nil {
-			return n, err
-		}
-
-		lr.logger.mutex.Lock()
+	lr.logger.mutex.RLock()
+	defer lr.logger.mutex.RUnlock()
+	if !lr.logger.closed {
+		lr.logger.cond.Wait()
+	}
+	if lr.offset >= int64(lr.logger.buffer.Len()) {
 		if lr.logger.closed {
-			lr.logger.mutex.Unlock()
 			return 0, io.EOF
 		}
-		lr.logger.cond.Wait()
-		lr.logger.mutex.Unlock()
+		return 0, nil
 	}
+
+	n = copy(p, lr.logger.buffer.Bytes()[lr.offset:])
+	lr.offset += int64(n)
+	return n, nil
 }

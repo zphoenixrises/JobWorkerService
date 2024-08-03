@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,14 +26,15 @@ const (
 	JobStatusCompleted JobStatus = "COMPLETED"
 	JobStatusFailed    JobStatus = "FAILED"
 	JobStatusStopped   JobStatus = "STOPPED"
+	JobStatusKilled    JobStatus = "KILLED"
 )
 
 type Executor struct {
 	Command      string
 	Args         []string
 	cmd          *exec.Cmd
-	outputLogger *Logger
-	errorLogger  *Logger
+	outputLogger *logger
+	errorLogger  *logger
 	rm           *ResourceManager
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -182,18 +184,23 @@ func (e *Executor) Stop() error {
 	if e.status != JobStatusRunning {
 		return fmt.Errorf("job is not running")
 	}
-	fmt.Println("Stopping Job : ", e.rm.jobID)
 
-	fmt.Println("Sending SIGTERM")
+	e.status = JobStatusStopped
+	e.errorString = "Stopped"
+	log.Println("Stopping Job : ", e.rm.jobID)
+	log.Println("Sending SIGTERM")
 	// Send SIGTERM first
 	if err := e.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		return fmt.Errorf("failed to send SIGTERM: %w", err)
 	}
+
 	// Wait for a short period to allow graceful shutdown
 	select {
 	case <-time.After(5 * time.Second):
 		// If the process hasn't exited, force kill it
-		fmt.Println("Sending SIGKILL")
+		log.Println("Sending SIGKILL")
+		e.status = JobStatusKilled
+		e.errorString = "Killed"
 		if err := e.cmd.Process.Kill(); err != nil {
 			return fmt.Errorf("failed to kill process: %w", err)
 		}
@@ -201,7 +208,6 @@ func (e *Executor) Stop() error {
 		// Process has exited
 	}
 
-	e.status = JobStatusStopped
 	e.stopped = time.Now()
 	return nil
 }
@@ -254,7 +260,7 @@ func (e *Executor) Wait() error {
 	return nil
 }
 
-func (e *Executor) handleOutput(r io.Reader, logger *Logger, sourceType string) {
+func (e *Executor) handleOutput(r io.Reader, logger *logger, sourceType string) {
 	buffer := make([]byte, smallBufferSize)
 	for {
 		n, err := r.Read(buffer)

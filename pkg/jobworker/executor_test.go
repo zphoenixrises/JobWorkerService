@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestExecutorLifecycle(t *testing.T) {
@@ -119,7 +121,7 @@ func TestJobsWithDifferentOutputs(t *testing.T) {
 		expected string
 	}{
 		{"SparseOutput", "sh", []string{"-c", "echo 'start'; sleep 0.1; echo 'middle'; sleep 0.1; echo 'end'"}, 300 * time.Millisecond, "start\nmiddle\nend\n"},
-		// {"DenseOutput", "yes", []string{"test"}, 1 * time.Millisecond, "test\n"},
+		{"DenseOutput", "yes", []string{"test"}, 1 * time.Millisecond, "test\n"},
 		{"LongRunningJob", "sleep", []string{"1"}, 1100 * time.Millisecond, ""},
 		{"ShortRunningJob", "echo", []string{"quick job"}, 100 * time.Millisecond, "quick job\n"},
 	}
@@ -142,6 +144,8 @@ func TestJobsWithDifferentOutputs(t *testing.T) {
 
 			time.Sleep(tt.duration)
 
+			executor.Stop()
+
 			output, err := readAllOutput(executor.GetOutputReader())
 			if err != nil {
 				t.Fatalf("Failed to read output: %v", err)
@@ -150,8 +154,6 @@ func TestJobsWithDifferentOutputs(t *testing.T) {
 			if tt.expected != "" && !strings.Contains(output, tt.expected) {
 				t.Errorf("Expected output to contain '%s', got '%s'", tt.expected, output)
 			}
-
-			executor.Stop()
 
 			status := executor.GetStatus()
 			if status != JobStatusStopped && status != JobStatusCompleted {
@@ -191,25 +193,15 @@ func TestResourceLimitEnforcement(t *testing.T) {
 			}
 
 			// Test Start
-			err = executor.Start()
-			if err != nil {
-				t.Fatalf("Failed to start executor: %v", err)
-			}
+			assert.NoError(t, executor.Start())
 
 			go func() {
 				time.Sleep(3 * time.Second)
 				executor.Stop()
 			}()
 			// Test Stops
-			err = executor.Wait()
-			if err != nil {
-				t.Fatalf("Failed to stop executor: %v", err)
-			}
-
-			status := executor.GetStatus()
-			if status != JobStatusCompleted {
-				t.Errorf("Expected status Completed, got %v", status)
-			}
+			assert.NoError(t, executor.Wait())
+			assert.Equal(t, JobStatusKilled, executor.GetStatus())
 		})
 	}
 }
