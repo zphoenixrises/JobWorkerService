@@ -3,6 +3,7 @@ package jobworker
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,11 +19,12 @@ const (
 )
 
 var cgroupInitialized = false
+var enableCgroups = true
 
 type ResourceLimits struct {
-	CPUWeight   uint64
+	CPUWeight   float32
 	MemoryLimit uint64
-	IOWeight    uint64
+	IOBPS       uint64
 }
 
 type ResourceManager struct {
@@ -33,6 +35,9 @@ type ResourceManager struct {
 }
 
 func init() {
+	if !enableCgroups {
+		return
+	}
 	if err := os.MkdirAll(filepath.Join(cgroupsPath, jobWorkerPath), 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create root cgroup: %v", err)
 		return
@@ -47,8 +52,15 @@ func init() {
 }
 
 // A new cgroup will be initialized by generating a UUID.
-func NewResourceManager() (*ResourceManager, error) {
+func newResourceManager() (*ResourceManager, error) {
 	jobID := uuid.New().String()
+	if !enableCgroups {
+		return &ResourceManager{
+			jobID: jobID,
+			path:  "",
+		}, nil
+	}
+
 	if !cgroupInitialized {
 		return nil, fmt.Errorf("cgroups root directory not initialized")
 	}
@@ -66,11 +78,14 @@ func NewResourceManager() (*ResourceManager, error) {
 
 func enableControllers(path string) error {
 	controllersPath := filepath.Join(path, "cgroup.subtree_control")
-	fmt.Printf("controllerpath: %s", controllersPath)
+	log.Printf("controllerpath: %s", controllersPath)
 	return os.WriteFile(controllersPath, []byte("+cpu +io +memory"), 0644)
 }
 
-func (rm *ResourceManager) SetLimits(limits ResourceLimits) error {
+func (rm *ResourceManager) setLimits(limits ResourceLimits) error {
+	if !enableCgroups {
+		return nil
+	}
 	rm.limits = limits
 	if err := rm.setCPULimit(); err != nil {
 		return err
@@ -88,18 +103,27 @@ func (rm *ResourceManager) SetLimits(limits ResourceLimits) error {
 }
 
 func (rm *ResourceManager) setCPULimit() error {
-	limit := fmt.Sprintf("%d 100000", rm.limits.CPUWeight)
-	fmt.Println("Setting cpu limit : ", limit)
+	weight := int64(rm.limits.CPUWeight * 100000)
+	if weight > 100000 {
+		weight = 100000
+	}
+	if weight < 100 {
+		weight = 100
+	}
+	limit := fmt.Sprintf("%d 100000", weight)
+	log.Println("Setting cpu limit : ", limit)
 	return os.WriteFile(filepath.Join(rm.path, "cpu.max"), []byte(limit), 0644)
 }
 
 func (rm *ResourceManager) setMemoryLimit() error {
-	return os.WriteFile(filepath.Join(rm.path, "memory.max"), []byte(fmt.Sprintf("%d", rm.limits.MemoryLimit)), 0644)
+	limit := fmt.Sprintf("%d", rm.limits.MemoryLimit)
+	log.Println("Setting memory limit : ", limit)
+	return os.WriteFile(filepath.Join(rm.path, "memory.max"), []byte(limit), 0644)
 }
 
 func (rm *ResourceManager) setIOLimit() error {
-	limit := fmt.Sprintf("default rbps=%d wbps=%d riops=max wiops=max", rm.limits.IOWeight, rm.limits.IOWeight)
-
+	limit := fmt.Sprintf("default rbps=%d wbps=%d riops=max wiops=max", rm.limits.IOBPS, rm.limits.IOBPS)
+	log.Println("Setting io limit : ", limit)
 	if err := os.WriteFile(filepath.Join(rm.path, "io.max"), []byte(limit), 0644); err != nil {
 		return nil
 	}
@@ -112,7 +136,8 @@ func (rm *ResourceManager) setIOLimit() error {
 	successful := false
 
 	for _, majorMinor := range majorMinorList {
-		limit := fmt.Sprintf("%d:%d rbps=%d wbps=%d riops=max wiops=max", majorMinor[0], majorMinor[1], rm.limits.IOWeight, rm.limits.IOWeight)
+		limit := fmt.Sprintf("%d:%d rbps=%d wbps=%d riops=max wiops=max", majorMinor[0], majorMinor[1], rm.limits.IOBPS, rm.limits.IOBPS)
+		log.Println("Setting io limit : ", limit)
 		if err := os.WriteFile(filepath.Join(rm.path, "io.max"), []byte(limit), 0644); err == nil {
 			successful = true
 		}
@@ -123,11 +148,17 @@ func (rm *ResourceManager) setIOLimit() error {
 	return nil
 }
 
-func (rm *ResourceManager) AddProcess(pid int) error {
+func (rm *ResourceManager) addProcess(pid int) error {
+	if !enableCgroups {
+		return nil
+	}
 	return os.WriteFile(filepath.Join(rm.path, "cgroup.procs"), []byte(strconv.Itoa(pid)), 0644)
 }
 
 func (rm *ResourceManager) Cleanup() error {
+	if !enableCgroups {
+		return nil
+	}
 	rm.mutex.Lock()
 	defer rm.mutex.Unlock()
 

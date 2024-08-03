@@ -1,17 +1,21 @@
 FROM golang:1.22.5 AS builder
-# Set environment variables for cross-compilation
-ENV GOOS=linux
-ENV GOARCH=amd64
+
+# Install required packages including GCC for cgo
+RUN apt-get update && apt-get install -y build-essential stress-ng
+
+# This is needed for running race detector
+ENV CGO_ENABLED=1
 
 WORKDIR /app
 
+# Copy go.mod and go.sum files
 COPY go.mod go.sum ./
 
+# Download all dependencies. Dependencies will be cached if the go.mod and go.sum files are not changed
 RUN go mod download
 
+# Copy the source code
 COPY . .
 
-# Install stress-ng
-RUN apt-get update && apt-get install -y stress-ng
-# Run tests
-CMD ["go", "test","-v", "./pkg/jobworker/..."]
+# Run tests with the race detector
+CMD ["go", "test", "-race", "-v", "./pkg/jobworker/..."]

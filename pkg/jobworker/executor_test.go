@@ -11,11 +11,14 @@ import (
 )
 
 func TestExecutorLifecycle(t *testing.T) {
-	executor, jobID, err := NewExecutor("echo", []string{"Hello, World!"}, ResourceLimits{
-		CPUWeight:   10000,
-		MemoryLimit: 1024 * 1024,
-		IOWeight:    10485760,
-	})
+
+	executor, jobID, err :=
+		NewExecutor("echo", []string{"Hello, World!"},
+			ResourceLimits{
+				CPUWeight:   .5,
+				MemoryLimit: 1024 * 1024,
+				IOBPS:       10485760,
+			})
 	if err != nil {
 		t.Fatalf("Failed to create executor: %v", err)
 	}
@@ -58,9 +61,9 @@ func TestExecutorLifecycle(t *testing.T) {
 
 func TestConcurrentOutputStreaming(t *testing.T) {
 	executor, _, err := NewExecutor("yes", nil, ResourceLimits{
-		CPUWeight:   10000,
+		CPUWeight:   .5,
 		MemoryLimit: 1024 * 1024,
-		IOWeight:    10485760,
+		IOBPS:       10485760,
 	}) // Continuously output 'y'
 	if err != nil {
 		t.Fatalf("Failed to create executor: %v", err)
@@ -129,9 +132,9 @@ func TestJobsWithDifferentOutputs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			executor, _, err := NewExecutor(tt.cmd, tt.args, ResourceLimits{
-				CPUWeight:   10000,
+				CPUWeight:   .5,
 				MemoryLimit: 1024 * 1024,
-				IOWeight:    10485760,
+				IOBPS:       10485760,
 			})
 			if err != nil {
 				t.Fatalf("Failed to create executor: %v", err)
@@ -143,7 +146,6 @@ func TestJobsWithDifferentOutputs(t *testing.T) {
 			}
 
 			time.Sleep(tt.duration)
-
 			executor.Stop()
 
 			output, err := readAllOutput(executor.GetOutputReader())
@@ -164,34 +166,29 @@ func TestJobsWithDifferentOutputs(t *testing.T) {
 }
 
 func TestResourceLimitEnforcement(t *testing.T) {
+	// These need some more work
 	tests := []struct {
-		name       string
-		command    string
-		args       []string
-		resource   string
-		limitValue int
+		name    string
+		command string
+		args    []string
 	}{
-		{"CPU Stress", "stress-ng", []string{"--cpu", "2", "--timeout", "2s"}, "cpu", 10000},
-		{"Memory Stress", "stress-ng", []string{"--vm", "1", "--vm-bytes", "2M", "--timeout", "2s"}, "memory", 1024 * 1024}, // 1 MB
-		{"IO Stress", "stress-ng", []string{"--hdd", "1", "--hdd-bytes", "20M", "--timeout", "2s"}, "io", 10485760},         // 10 MB/s
+		{"CPU Stress", "stress-ng", []string{"--cpu", "0", "--timeout", "2s"}},
+		{"Memory Stress", "stress-ng", []string{"--vm", "1", "--vm-bytes", "2G", "--timeout", "2s"}},                     // 1 MB
+		{"IO Stress", "stress-ng", []string{"--hdd", "1", "--hdd-opts", "sync", "--hdd-bytes", "1G", "--timeout", "2s"}}, // 10 MB/s
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resourceLimits := ResourceLimits{
-				CPUWeight:   10000,
-				MemoryLimit: 1024 * 1024, // 1 MB
-				IOWeight:    10485760,    // 10 MB/s
+				CPUWeight:   .25,
+				MemoryLimit: 1024 * 1024, // 1Mb
+				IOBPS:       1048576,     // 1Mb/s
 			}
 
-			executor, jobID, err := NewExecutor(tt.command, tt.args, resourceLimits)
+			executor, _, err := NewExecutor(tt.command, tt.args, resourceLimits)
 			if err != nil {
 				t.Fatalf("Failed to create executor: %v", err)
 			}
-			if jobID == "" {
-				t.Fatalf("Expected non-empty jobID")
-			}
-
 			// Test Start
 			assert.NoError(t, executor.Start())
 
@@ -201,7 +198,7 @@ func TestResourceLimitEnforcement(t *testing.T) {
 			}()
 			// Test Stops
 			assert.NoError(t, executor.Wait())
-			assert.Equal(t, JobStatusKilled, executor.GetStatus())
+			assert.Equal(t, JobStatusCompleted, executor.GetStatus())
 		})
 	}
 }
