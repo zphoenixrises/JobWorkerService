@@ -70,9 +70,9 @@ export SERVER_ADDRESS=localhost:50051 && export CLIENT_CERT_FILE=./certs/client1
 
 Now you can use the CLI to interact with the server. Here are some example commands:
 
-1. Start a job that prints the current time every second:
+1. Start a job that prints "start", "middle" and "end":
    ```
-   ./build/jobworker-client start .5 1024 1024 sh -c "echo 'start'; sleep 20; echo 'middle'; sleep 20; echo 'end'"
+   ./build/jobworker-client start .5 1048576 1048576 sh -c "echo 'start'; sleep 20; echo 'middle'; sleep 20; echo 'end'"
    ```
    This will return a job ID.
 
@@ -90,6 +90,11 @@ Now you can use the CLI to interact with the server. Here are some example comma
    ```
    ./build/jobworker-client stop <job-id>
    ```
+
+The command in 1. will pass. Here is an example of one that will fail:
+```
+ ./build/jobworker-client start .5 1024 1024 sh -c "echo 'start'; sleep 20; echo 'middle'; sleep 20; echo 'end'"
+```
 
 ## Additional CLI Commands
 
